@@ -15,7 +15,7 @@ st.set_page_config(page_title="Household Vulnerability Monitor", layout="wide")
 # =====================================================================
 @st.cache_data
 def load_data():
-    return pd.read_csv('susenas_ml_ready.csv')
+    return pd.read_csv('susenas_ml_ready.csv.gz', compression='gzip')
 
 @st.cache_resource
 def train_model(data):
