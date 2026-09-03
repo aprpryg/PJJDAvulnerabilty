@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
+from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix
 import urllib.request
 import json
 
@@ -20,43 +21,53 @@ def load_data():
     return pd.read_csv('susenas_ml_ready.csv.gz', compression='gzip')
 
 @st.cache_resource
-def train_model_and_evaluate(data):
+def train_models_and_evaluate(data):
     features = ['M101', 'krt_jk', 'krt_umur', 'krt_pendidikan', 'krt_bekerja', 'M1501', 'penerima_bansos']
     target = 'high_vulnerability'
     df_ml = data[features + [target]].dropna().copy()
     
-    # Konversi isian huruf ke angka
     df_ml['krt_bekerja'] = df_ml['krt_bekerja'].apply(lambda x: 1 if str(x).strip() == 'A' else 0)
     
-    # One-Hot Encoding
     X = pd.get_dummies(df_ml[features], columns=['M101', 'M1501', 'krt_pendidikan'], drop_first=True)
     y = df_ml[target]
     
-    # Train-test split untuk evaluasi
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    # Latih model
+    # Model 1: Random Forest
     rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, class_weight='balanced')
     rf.fit(X_train, y_train)
+    y_pred_rf = rf.predict(X_test)
+    y_prob_rf = rf.predict_proba(X_test)[:, 1]
     
-    # Evaluasi
-    y_pred = rf.predict(X_test)
-    y_prob = rf.predict_proba(X_test)[:, 1]
+    # Model 2: Logistic Regression (Untuk Pembanding)
+    lr = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
+    lr.fit(X_train, y_train)
+    y_pred_lr = lr.predict(X_test)
+    y_prob_lr = lr.predict_proba(X_test)[:, 1]
     
     metrics = {
-        'auc': roc_auc_score(y_test, y_prob),
-        'precision': precision_score(y_test, y_pred),
-        'recall': recall_score(y_test, y_pred),
-        'f1': f1_score(y_test, y_pred)
+        'RF': {
+            'auc': roc_auc_score(y_test, y_prob_rf),
+            'precision': precision_score(y_test, y_pred_rf),
+            'recall': recall_score(y_test, y_pred_rf),
+            'f1': f1_score(y_test, y_pred_rf)
+        },
+        'LR': {
+            'auc': roc_auc_score(y_test, y_prob_lr),
+            'precision': precision_score(y_test, y_pred_lr),
+            'recall': recall_score(y_test, y_pred_lr),
+            'f1': f1_score(y_test, y_pred_lr)
+        }
     }
     
-    # Feature Importance
+    cm_rf = confusion_matrix(y_test, y_pred_rf)
+    
     importances = pd.DataFrame({
         'Feature': X.columns,
         'Importance': rf.feature_importances_
     }).sort_values(by='Importance', ascending=False)
     
-    return rf, X.columns, importances, metrics
+    return rf, X.columns, importances, metrics, cm_rf
 
 @st.cache_data
 def load_geojson():
@@ -67,12 +78,10 @@ def load_geojson():
     except Exception:
         return None
 
-# Eksekusi pemanggilan fungsi
 df = load_data()
-model, model_features, feature_importances, model_metrics = train_model_and_evaluate(df)
+model, model_features, feature_importances, model_metrics, cm_rf = train_models_and_evaluate(df)
 geojson_indo = load_geojson()
 
-# Mapping Provinsi
 prov_map = {
     11: 'ACEH', 12: 'SUMATERA UTARA', 13: 'SUMATERA BARAT', 14: 'RIAU', 15: 'JAMBI', 
     16: 'SUMATERA SELATAN', 17: 'BENGKULU', 18: 'LAMPUNG', 19: 'BANGKA BELITUNG', 21: 'KEPULAUAN RIAU', 
@@ -114,12 +123,9 @@ with tab1:
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total households", f"{total_pop/1_000_000:,.1f} juta")
-    
     col2.metric("High vulnerability", f"{(high_vuln_pop/total_pop)*100:.1f}%")
-    col2.caption("Definisi: Memenuhi ≥ 2 dari 3 indikator deprivasi (Ekonomi, Pangan, Perumahan).")
-    
+    col2.caption("Definisi: Memenuhi ≥ 2 dari 3 indikator deprivasi.")
     col3.metric("Assistance coverage", f"{(assisted_pop/total_pop)*100:.1f}%")
-    
     col4.metric("Residual vulnerability", f"{(residual_vuln_pop/assisted_pop)*100:.1f}%")
     col4.caption("Denominator: Persentase rentan *di antara* kelompok penerima bantuan.")
 
@@ -134,34 +140,47 @@ with tab1:
         prov_pct['Vuln_Pct'] = prov_pct['Vuln_Pct'].round(1) 
         prov_pct['Nama_Provinsi'] = prov_pct['M101'].map(prov_map).fillna(prov_pct['M101'].astype(str))
         
-        # Ambil Top 5 Provinsi
-        top_5 = prov_pct.sort_values('Vuln_Pct', ascending=False).head(5)
-        top_5_names = ", ".join(top_5['Nama_Provinsi'].tolist())
-        st.info(f"**Geographical Insight:** Kawasan dengan kerentanan tertinggi didominasi oleh wilayah Timur ({top_5_names}). Intervensi di wilayah ini memerlukan pembangunan infrastruktur dasar yang struktural, tidak semata distribusi bantuan.")
+        # --- FIX #13: LEGENDA DISKRIT PADA PETA ---
+        def categorize_vuln(val):
+            if val < 20: return "Low (0-20%)"
+            elif val <= 40: return "Moderate (20-40%)"
+            else: return "High (>40%)"
+        prov_pct['Category'] = prov_pct['Vuln_Pct'].apply(categorize_vuln)
+        
+        st.info("Top 5 kerentanan tertinggi didominasi wilayah Timur. Intervensi memerlukan pembangunan infrastruktur dasar yang struktural.")
         
         col_map_view, col_bar_view = st.columns([1.2, 1])
         with col_map_view:
             if geojson_indo:
+                color_map = {"Low (0-20%)": "#fee5d9", "Moderate (20-40%)": "#fb6a4a", "High (>40%)": "#a50f15"}
                 fig_map = px.choropleth(
                     prov_pct, geojson=geojson_indo, featureidkey="properties.Propinsi",
-                    locations="Nama_Provinsi", color="Vuln_Pct", color_continuous_scale="Reds",
-                    labels={'Vuln_Pct': '% Rentan'}
+                    locations="Nama_Provinsi", color="Category", color_discrete_map=color_map,
+                    category_orders={"Category": ["Low (0-20%)", "Moderate (20-40%)", "High (>40%)"]}
                 )
                 fig_map.update_geos(fitbounds="locations", visible=False)
-                fig_map.update_traces(hovertemplate="<b>%{location}</b><br>Rentan: %{z}%<extra></extra>")
-                fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=550)
+                fig_map.update_traces(hovertemplate="<b>%{location}</b><br>Rentan: %{customdata[0]}%<extra></extra>", customdata=prov_pct[['Vuln_Pct']])
+                fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=550, legend_title="Risk Level")
                 st.plotly_chart(fig_map, use_container_width=True)
                 
         with col_bar_view:
+            # --- FIX #12: TOP 10 / BOTTOM 10 DENGAN TOGGLE ---
+            view_all = st.checkbox("View all 38 provinces")
+            if view_all:
+                plot_df = prov_pct.sort_values('Vuln_Pct', ascending=True)
+                h = 750
+            else:
+                top_10 = prov_pct.sort_values('Vuln_Pct', ascending=False).head(10)
+                bottom_10 = prov_pct.sort_values('Vuln_Pct', ascending=True).head(10)
+                plot_df = pd.concat([bottom_10, top_10]).sort_values('Vuln_Pct', ascending=True)
+                h = 550
+                
             fig_bar = px.bar(
-                prov_pct.sort_values('Vuln_Pct', ascending=True), 
-                x='Vuln_Pct', y='Nama_Provinsi', orientation='h',
-                labels={'Vuln_Pct': '% Rentan', 'Nama_Provinsi': ''},
-                color='Vuln_Pct', color_continuous_scale='Reds', height=750 
+                plot_df, x='Vuln_Pct', y='Nama_Provinsi', orientation='h',
+                color='Category', color_discrete_map=color_map, height=h 
             )
             fig_bar.update_yaxes(dtick=1)
-            fig_bar.update_traces(hovertemplate="<b>%{y}</b><br>Rentan: %{x}%<extra></extra>")
-            fig_bar.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+            fig_bar.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, showlegend=False)
             st.plotly_chart(fig_bar, use_container_width=True)
 
 # ---------------------------------------------------------------------
@@ -174,7 +193,7 @@ with tab2:
     kuadran_A = df[(df['high_vulnerability'] == 0) & (df['penerima_bansos'] == 0)]['FWT'].sum() / total_pop * 100
     kuadran_B = underserved_pop / total_pop * 100
     kuadran_C = df[(df['high_vulnerability'] == 0) & (df['penerima_bansos'] == 1)]['FWT'].sum() / total_pop * 100
-    kuadran_D = residual_vuln_pop / total_pop * 100
+    kuadran_D = df[(df['high_vulnerability'] == 1) & (df['penerima_bansos'] == 1)]['FWT'].sum() / total_pop * 100
 
     col_mat_1, col_mat_2 = st.columns([1.5, 1])
     with col_mat_1:
@@ -220,37 +239,62 @@ with tab2:
 
     with col_mat_2:
         st.warning("**Policy Insights:**\n"
-               "* **Kuadran B (Potentially Underserved):** Mengindikasikan *potential social protection gap* yang perlu ditindaklanjuti dengan pencocokan data administratif (Regsosek/DTKS) untuk memverifikasi *exclusion error*.\n"
-               "* **Kuadran D (Residual Vulnerability):** Sebagian penerima bantuan masih menunjukkan karakteristik kerentanan tinggi. Hal ini menunjukkan perlunya analisis lebih lanjut mengenai kecukupan nilai transfer, ketepatan sasaran, dan kombinasi intervensi pendamping.")
+               "* **Kuadran B (Potentially Underserved):** Mengindikasikan *potential social protection gap* yang perlu diverifikasi dengan data Regsosek.\n"
+               "* **Kuadran D (Residual Vulnerability):** Menunjukkan perlunya analisis kecukupan nilai transfer, ketepatan sasaran, dan intervensi pendamping.")
+
+    # --- FIX #4 & #8: INTERAKTIVITAS KUADRAN & PROFIL KOMPARATIF ---
+    st.divider()
+    st.markdown("### Profile Filter")
+    sel_kuadran = st.radio("Tampilkan karakteristik demografi dan deprivasi untuk:", 
+                           ["Semua Rumah Tangga", "🔴 Kuadran B (Potentially Underserved)", "🟠 Kuadran D (Residual Vulnerability)"], horizontal=True)
+    
+    if "B" in sel_kuadran:
+        df_prof = df[(df['high_vulnerability'] == 1) & (df['penerima_bansos'] == 0)]
+    elif "D" in sel_kuadran:
+        df_prof = df[(df['high_vulnerability'] == 1) & (df['penerima_bansos'] == 1)]
+    else:
+        df_prof = df.copy()
+        
+    avg_umur = (df_prof['krt_umur'] * df_prof['FWT']).sum() / df_prof['FWT'].sum() if len(df_prof)>0 else 0
+    krt_wanita = df_prof[df_prof['krt_jk']==2]['FWT'].sum() / df_prof['FWT'].sum() * 100 if len(df_prof)>0 else 0
+    
+    col_p1, col_p2 = st.columns(2)
+    col_p1.metric("Rata-rata Usia Kepala RT", f"{avg_umur:.1f} Tahun")
+    col_p2.metric("KRT Perempuan (Female Headed)", f"{krt_wanita:.1f}%")
 
 # ---------------------------------------------------------------------
 # TAB 3: MODEL & INSIGHTS
 # ---------------------------------------------------------------------
 with tab3:
-    st.subheader("Why are they vulnerable? (Model Performance & Drivers)")
+    st.subheader("Model Performance & Comparison")
     
-    col_metric, col_chart = st.columns([1, 2])
-    with col_metric:
-        st.markdown("**Random Forest Classification Metric**")
-        st.markdown("Model dilatih untuk mendeteksi rumah tangga rentan berisiko tinggi.")
-        st.metric("ROC-AUC Score", f"{model_metrics['auc']:.3f}")
-        st.metric("F1-Score (Class 1)", f"{model_metrics['f1']:.3f}")
-        st.metric("Precision", f"{model_metrics['precision']:.3f}")
-        st.metric("Recall", f"{model_metrics['recall']:.3f}")
+    # --- FIX #17: MODEL COMPARISON & CONFUSION MATRIX ---
+    col_mc1, col_mc2, col_mc3 = st.columns([1.2, 1, 1.5])
+    
+    with col_mc1:
+        st.markdown("**1. Model Comparison**")
+        comp_df = pd.DataFrame([
+            {"Model": "Random Forest", "AUC": model_metrics['RF']['auc'], "Precision": model_metrics['RF']['precision'], "Recall": model_metrics['RF']['recall'], "F1": model_metrics['RF']['f1']},
+            {"Model": "Logistic Regression", "AUC": model_metrics['LR']['auc'], "Precision": model_metrics['LR']['precision'], "Recall": model_metrics['LR']['recall'], "F1": model_metrics['LR']['f1']}
+        ])
+        st.dataframe(comp_df.style.format({"AUC": "{:.3f}", "Precision": "{:.3f}", "Recall": "{:.3f}", "F1": "{:.3f}"}), hide_index=True)
+    
+    with col_mc2:
+        st.markdown("**2. RF Confusion Matrix**")
+        fig_cm = px.imshow(cm_rf, text_auto=True, color_continuous_scale='Blues',
+                           labels=dict(x="Predicted Label", y="True Label"),
+                           x=['Low Vuln', 'High Vuln'], y=['Low Vuln', 'High Vuln'])
+        fig_cm.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=200)
+        st.plotly_chart(fig_cm, use_container_width=True)
         
-    with col_chart:
-        st.markdown("**Top Vulnerability Drivers (Feature Importance)**")
-        st.markdown("Faktor demografis dan struktural yang membedakan kerentanan rumah tangga.")
-        
-        # Ambil top 10 fitur untuk divisualisasikan
-        top_features = feature_importances.head(10).sort_values(by='Importance', ascending=True)
-        
+    with col_mc3:
+        st.markdown("**3. Top Vulnerability Drivers**")
+        top_features = feature_importances.head(8).sort_values(by='Importance', ascending=True)
         fig_feat = px.bar(
             top_features, x='Importance', y='Feature', orientation='h',
-            labels={'Importance': 'Tingkat Kepentingan Relatif', 'Feature': 'Variabel'},
             color='Importance', color_continuous_scale='Blues'
         )
-        fig_feat.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=400)
+        fig_feat.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=250)
         st.plotly_chart(fig_feat, use_container_width=True)
 
 # ---------------------------------------------------------------------
@@ -266,19 +310,12 @@ with tab4:
         with st.form("simulator_form"):
             prov_options = sorted(df['M101'].dropna().unique())
             sim_prov = st.selectbox("Provinsi (Location)", options=prov_options, format_func=lambda x: prov_map.get(x, str(x)))
-            
-            st.markdown("**HOUSEHOLD PROFILE**")
             sim_umur = st.slider("Age of household head (Usia KRT)", 18, 90, 45)
             sim_jk = st.selectbox("Gender", [1, 2], format_func=lambda x: "Male (Laki-laki)" if x == 1 else "Female (Perempuan)")
             sim_kerja = st.selectbox("Employment", [1, 0], format_func=lambda x: "Working" if x == 1 else "Not Working")
-            
             pend_options = [3, 8, 13, 21, 25]
-            sim_pend = st.selectbox("Education", pend_options, 
-                                    format_func=lambda x: {3: "SD", 8: "SMP", 13: "SMA", 21: "S1", 25: "No Primary Education"}.get(x, str(x)))
-            
+            sim_pend = st.selectbox("Education", pend_options, format_func=lambda x: {3: "SD", 8: "SMP", 13: "SMA", 21: "S1", 25: "No Primary Education"}.get(x, str(x)))
             sim_rumah = st.selectbox("Housing", [1, 2, 3], format_func=lambda x: {1: "Own House", 2: "Rent", 3: "Rent-Free"}.get(x, str(x)))
-            
-            st.markdown("**POLICY SCENARIO**")
             sim_bansos = st.selectbox("Social Assistance", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
             
             submit_btn = st.form_submit_button("Estimate Vulnerability", use_container_width=True)
@@ -297,15 +334,26 @@ with tab4:
             
             input_df = pd.DataFrame([input_dict])
             input_df = input_df.reindex(columns=model_features, fill_value=0)
-            
             prob = model.predict_proba(input_df)[0][1]
             
             st.info("### Output")
-            st.write(f"Untuk karakteristik rumah tangga yang dipilih, model mengestimasi probabilitas kerentanan sebesar **{prob*100:.1f}%**.")
+            st.write(f"Untuk karakteristik tersebut, model mengestimasi probabilitas kerentanan sebesar **{prob*100:.1f}%**.")
             
             if prob >= 0.5:
                 st.error("**Risk Category: HIGH**")
             else:
                 st.success("**Risk Category: LOW**")
+            
+            # --- FIX #18: TOP CONTRIBUTING CHARACTERISTICS ---
+            st.markdown("**Karakteristik Pendorong (Top Drivers):**")
+            top_3_global = feature_importances.head(3)['Feature'].tolist()
+            st.write("Berdasarkan arsitektur *Random Forest*, variabel berikut memberikan bobot asosiasi terbesar terhadap skor akhir Anda:")
+            for f in top_3_global:
+                if f == 'penerima_bansos':
+                    st.write(f"- Status Bantuan Sosial ({'Menerima' if sim_bansos==1 else 'Tidak Menerima'})")
+                elif f == 'krt_umur':
+                    st.write(f"- Usia Kepala Rumah Tangga ({sim_umur} Tahun)")
+                elif f.startswith('krt_pendidikan'):
+                    st.write(f"- Status Pendidikan KRT")
                 
-            st.caption("⚠️ **Analytical Caveat:** Skor di atas merupakan estimasi probabilitas pola asosiatif berdasarkan data *cross-sectional* SUSENAS. Fitur ini tidak digunakan untuk menyimpulkan dampak kausal program perlindungan sosial.")
+            st.caption("⚠️ **Analytical Caveat:** Skor di atas merupakan estimasi pola asosiatif berdasarkan data *cross-sectional* SUSENAS. Fitur ini tidak digunakan untuk menyimpulkan dampak kausal program perlindungan sosial.")
