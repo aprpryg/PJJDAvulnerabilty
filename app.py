@@ -123,14 +123,16 @@ with tab1:
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total households", f"{total_pop/1_000_000:,.1f} juta")
+    col1.caption("📝 Total populasi keluarga (berdasarkan pembobotan survei nasional).")
     
     col2.metric("High vulnerability", f"{(high_vuln_pop/total_pop)*100:.1f}%")
-    col2.caption("📝 **Note:** Keluarga yang mengalami minimal 2 masalah dasar sekaligus (ekonomi lemah, kurang gizi, atau tanpa listrik).")
+    col2.caption("📝 Keluarga yang mengalami minimal 2 masalah dasar sekaligus (ekonomi lemah, kurang gizi, atau tanpa listrik).")
     
     col3.metric("Assistance coverage", f"{(assisted_pop/total_pop)*100:.1f}%")
+    col3.caption("📝 Cakupan persentase keluarga yang terdaftar menerima bantuan sosial.")
     
     col4.metric("Residual vulnerability", f"{(residual_vuln_pop/assisted_pop)*100:.1f}%")
-    col4.caption("📝 **Note:** Persentase keluarga yang masih hidup dalam kondisi rentan **meskipun** sudah menerima bansos.")
+    col4.caption("📝 Persentase keluarga yang masih hidup rentan **meskipun** sudah menerima bansos.")
 
     st.divider()
     st.subheader("Vulnerability by Province")
@@ -147,7 +149,18 @@ with tab1:
             if val < 20: return "Low (0-20%)"
             elif val <= 40: return "Moderate (20-40%)"
             else: return "High (>40%)"
+        
         prov_pct['Category'] = prov_pct['Vuln_Pct'].apply(categorize_vuln)
+        
+        # --- FIX: Penyatuan Pemekaran Papua Khusus untuk Peta GeoJSON (34 Provinsi) ---
+        prov_map_geojson = prov_map.copy()
+        prov_map_geojson.update({95: 'PAPUA', 96: 'PAPUA', 97: 'PAPUA', 92: 'PAPUA BARAT'})
+        prov_vuln_geo = df[df['high_vulnerability'] == 1].groupby(df['M101'].map(prov_map_geojson))['FWT'].sum()
+        prov_total_geo = df.groupby(df['M101'].map(prov_map_geojson))['FWT'].sum()
+        prov_pct_geo = (prov_vuln_geo / prov_total_geo * 100).reset_index(name='Vuln_Pct')
+        prov_pct_geo.rename(columns={'M101': 'Nama_Provinsi'}, inplace=True)
+        prov_pct_geo['Vuln_Pct'] = prov_pct_geo['Vuln_Pct'].round(1)
+        prov_pct_geo['Category'] = prov_pct_geo['Vuln_Pct'].apply(categorize_vuln)
         
         st.info("Top 5 kerentanan tertinggi didominasi wilayah Timur. Intervensi memerlukan pembangunan infrastruktur dasar yang struktural.")
         
@@ -156,12 +169,12 @@ with tab1:
             if geojson_indo:
                 color_map = {"Low (0-20%)": "#fee5d9", "Moderate (20-40%)": "#fb6a4a", "High (>40%)": "#a50f15"}
                 fig_map = px.choropleth(
-                    prov_pct, geojson=geojson_indo, featureidkey="properties.Propinsi",
+                    prov_pct_geo, geojson=geojson_indo, featureidkey="properties.Propinsi",
                     locations="Nama_Provinsi", color="Category", color_discrete_map=color_map,
                     category_orders={"Category": ["Low (0-20%)", "Moderate (20-40%)", "High (>40%)"]}
                 )
                 fig_map.update_geos(fitbounds="locations", visible=False)
-                fig_map.update_traces(hovertemplate="<b>%{location}</b><br>Rentan: %{customdata[0]}%<extra></extra>", customdata=prov_pct[['Vuln_Pct']])
+                fig_map.update_traces(hovertemplate="<b>%{location}</b><br>Rentan: %{customdata[0]}%<extra></extra>", customdata=prov_pct_geo[['Vuln_Pct']])
                 fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=550, legend_title="Risk Level")
                 st.plotly_chart(fig_map, use_container_width=True)
                 
@@ -178,6 +191,7 @@ with tab1:
                 
             fig_bar = px.bar(
                 plot_df, x='Vuln_Pct', y='Nama_Provinsi', orientation='h',
+                labels={'Vuln_Pct': 'Persentase Rentan (%)', 'Nama_Provinsi': ''}, # FIX: Label Axis
                 color='Category', color_discrete_map=color_map, height=h 
             )
             fig_bar.update_yaxes(dtick=1)
@@ -214,6 +228,7 @@ with tab2:
             <td style="border: 1px solid #ddd; padding:15px;">
                 <span style="font-size:20px;">A</span><br>
                 <span style="font-size:12px; font-weight:bold;">Low Priority</span><br>
+                <span style="font-size:11px; font-style:italic;">(Aman tanpa bantuan)</span><br>
                 <span style="font-size:14px; color:gray;">{kuadran_A:.1f}%</span>
             </td>
             <td style="border: 1px solid #ddd; padding:15px; background-color:#fff0f0;">
@@ -228,6 +243,7 @@ with tab2:
             <td style="border: 1px solid #ddd; padding:15px;">
                 <span style="font-size:20px;">C</span><br>
                 <span style="font-size:12px; font-weight:bold;">Protected</span><br>
+                <span style="font-size:11px; font-style:italic;">(Terlindungi / Tepat Sasaran)</span><br>
                 <span style="font-size:14px; color:gray;">{kuadran_C:.1f}%</span>
             </td>
             <td style="border: 1px solid #ddd; padding:15px; background-color:#fff8eb;">
@@ -242,13 +258,14 @@ with tab2:
 
     with col_mat_2:
         st.warning("**Policy Insights:**\n"
-               "* **Kuadran B (Potentially Underserved):** Mengindikasikan *potential social protection gap* yang perlu diverifikasi dengan data Regsosek.\n"
-               "* **Kuadran D (Residual Vulnerability):** Menunjukkan perlunya analisis kecukupan nilai transfer, ketepatan sasaran, dan intervensi pendamping.")
+               "* **Kuadran B (Potentially Underserved):** Mengindikasikan celah perlindungan (*exclusion error*) yang perlu diverifikasi ulang dengan data Regsosek.\n"
+               "* **Kuadran D (Residual Vulnerability):** Menunjukkan perlunya evaluasi lanjutan: apakah nominal bansos kurang, atau butuh intervensi program jenis lain?")
 
     st.divider()
     st.markdown("### Profile Filter")
-    sel_kuadran = st.radio("Tampilkan karakteristik demografi dan deprivasi untuk:", 
-                           ["Semua Rumah Tangga", "🔴 Kuadran B (Potentially Underserved)", "🟠 Kuadran D (Residual Vulnerability)"], horizontal=True)
+    st.caption("📝 Pilih salah satu kelompok pada matriks di atas untuk melihat ringkasan rata-rata demografinya.")
+    sel_kuadran = st.radio("Saring berdasarkan kuadran:", 
+                           ["Semua Rumah Tangga", "🔴 Kuadran B (Potentially Underserved)", "🟠 Kuadran D (Residual Vulnerability)"], horizontal=True, label_visibility="collapsed")
     
     if "B" in sel_kuadran:
         df_prof = df[(df['high_vulnerability'] == 1) & (df['penerima_bansos'] == 0)]
@@ -280,9 +297,10 @@ with tab3:
         ])
         st.dataframe(comp_df.style.format({"AUC": "{:.3f}", "Precision": "{:.3f}", "Recall": "{:.3f}", "F1": "{:.3f}"}), hide_index=True)
         st.caption("📝 **Keterangan Metrik:**\n"
-                   "- **AUC:** Akurasi model dalam membedakan rumah tangga rentan vs tidak rentan.\n"
-                   "- **Precision:** Ketepatan deteksi (persentase tebakan 'rentan' yang benar-benar rentan di lapangan).\n"
-                   "- **Recall:** Keberhasilan melacak warga rentan tanpa terlewat.")
+                   "- **AUC:** Tingkat akurasi model dalam membedakan warganya.\n"
+                   "- **Precision:** Ketepatan deteksi (tidak banyak alarm palsu).\n"
+                   "- **Recall:** Keberhasilan menangkap warga miskin (tidak banyak yang luput).")
+        st.caption("📝 **Mengapa ada 2 model?** Regresi Logistik digunakan sebagai pembanding (baseline) untuk membuktikan bahwa performa algoritma Random Forest yang kita pakai di dashboard ini benar-benar akurat dan stabil.")
     
     with col_mc2:
         st.markdown("**2. RF Confusion Matrix**")
@@ -291,18 +309,47 @@ with tab3:
                            x=['Low Vuln', 'High Vuln'], y=['Low Vuln', 'High Vuln'])
         fig_cm.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=200)
         st.plotly_chart(fig_cm, use_container_width=True)
-        st.caption("📝 **Note:** Matriks rincian tebakan model yang benar vs salah. Kotak biru gelap menunjukkan tebakan sistem yang tepat sasaran.")
+        st.caption("📝 Matriks rincian tebakan model. Kotak biru gelap (*True Label = Predicted Label*) menunjukkan tebakan sistem yang tepat sasaran dengan kondisi asli di lapangan.")
         
     with col_mc3:
         st.markdown("**3. Top Vulnerability Drivers**")
-        top_features = feature_importances.head(8).sort_values(by='Importance', ascending=True)
+        
+        # --- FIX: Mengubah Label Fitur agar mudah dibaca ---
+        feature_name_map = {
+            'penerima_bansos': 'Status Penerima Bansos',
+            'krt_umur': 'Usia Kepala RT',
+            'krt_jk': 'Gender Kepala RT',
+            'krt_bekerja': 'Status Pekerjaan',
+            'krt_pendidikan_3.0': 'Pendidikan KRT: SD',
+            'krt_pendidikan_8.0': 'Pendidikan KRT: SMP',
+            'krt_pendidikan_13.0': 'Pendidikan KRT: SMA',
+            'krt_pendidikan_21.0': 'Pendidikan KRT: D4/S1',
+            'krt_pendidikan_25.0': 'Pendidikan KRT: Tdk Tamat SD',
+            'M1501_2.0': 'Rumah: Sewa/Kontrak',
+            'M1501_3.0': 'Rumah: Bebas Sewa',
+        }
+        
+        top_features = feature_importances.head(8).sort_values(by='Importance', ascending=True).copy()
+        
+        # Pemetaan nama khusus untuk provinsi
+        def map_feature_labels(feat):
+            if feat in feature_name_map:
+                return feature_name_map[feat]
+            elif feat.startswith('M101_'):
+                prov_code = int(float(feat.split('_')[1]))
+                return f"Provinsi: {prov_map.get(prov_code, str(prov_code))}"
+            return feat
+            
+        top_features['Label'] = top_features['Feature'].apply(map_feature_labels)
+        
         fig_feat = px.bar(
-            top_features, x='Importance', y='Feature', orientation='h',
+            top_features, x='Importance', y='Label', orientation='h',
+            labels={'Importance': 'Tingkat Kepentingan', 'Label': ''},
             color='Importance', color_continuous_scale='Blues'
         )
         fig_feat.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=250)
         st.plotly_chart(fig_feat, use_container_width=True)
-        st.caption("📝 **Note:** Urutan faktor-faktor struktural utama yang paling menentukan apakah sebuah keluarga rentan atau tidak.")
+        st.caption("📝 Urutan variabel struktural terpenting yang digunakan sistem untuk membedakan apakah sebuah keluarga berstatus rentan atau tidak.")
 
 # ---------------------------------------------------------------------
 # TAB 4: RISK SIMULATOR
@@ -362,4 +409,4 @@ with tab4:
                 elif f.startswith('krt_pendidikan'):
                     st.write(f"- Status Pendidikan KRT")
                 
-            st.caption("⚠️ **Analytical Caveat:** Angka ini adalah perkiraan risiko berdasarkan pola data SUSENAS masa lalu, bukan alat untuk mengukur dampak sebab-akibat program perlindungan sosial.")
+            st.caption("📝 Angka ini adalah perkiraan risiko berdasarkan pola data SUSENAS masa lalu, bukan alat mutlak untuk mengukur dampak sebab-akibat program perlindungan sosial.")
