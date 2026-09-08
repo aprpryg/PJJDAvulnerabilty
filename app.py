@@ -167,24 +167,27 @@ with tab1:
         prov_pct['Vuln_Pct'] = prov_pct['Vuln_Pct'].round(1) 
         prov_pct['Nama_Provinsi'] = prov_pct['M101'].map(prov_map).fillna(prov_pct['M101'].astype(str))
         
+        # FUNGSI INI YANG SEBELUMNYA HILANG
+        def categorize_vuln(val):
+            if val < 20: return "Low (0-20%)"
+            elif val <= 40: return "Moderate (20-40%)"
+            else: return "High (>40%)"
+        
+        prov_pct['Category'] = prov_pct['Vuln_Pct'].apply(categorize_vuln)
+        
         # --- FIX MAP PAPUA: Normalisasi Nama Sesuai GeoJSON Superpikar ---
-        # GeoJSON menggunakan standar 34 provinsi dengan ejaan tertentu
         geojson_name_cleaner = {
-            # Pemekaran Papua digabung ke induk
             'PAPUA SELATAN': 'PAPUA',
             'PAPUA TENGAH': 'PAPUA',
             'PAPUA PEGUNUNGAN': 'PAPUA',
             'PAPUA BARAT DAYA': 'PAPUA BARAT',
-            # Normalisasi penulisan jika GeoJSON menggunakan variasi nama lama
             'DI YOGYAKARTA': 'DAERAH ISTIMEWA YOGYAKARTA',
             'DKI JAKARTA': 'JAKARTA RAYA', 
         }
 
-        # Khusus dataframe peta: mapping ke nama yang dikenali GeoJSON
         df_map = prov_pct.copy()
         df_map['Nama_Geo'] = df_map['Nama_Provinsi'].replace(geojson_name_cleaner)
         
-        # Agregasi ulang jika ada provinsi yang dilebur ke nama induk
         df_map_agg = df_map.groupby('Nama_Geo', as_index=False)['Vuln_Pct'].mean()
         df_map_agg['Category'] = df_map_agg['Vuln_Pct'].apply(categorize_vuln)
 
@@ -195,15 +198,12 @@ with tab1:
             if geojson_indo:
                 color_map = {"Low (0-20%)": "#fee5d9", "Moderate (20-40%)": "#fb6a4a", "High (>40%)": "#a50f15"}
                 
-                # Cek otomatis kunci properti nama di file geojson (biasanya 'Propinsi' atau 'NAME_1')
                 first_feat = geojson_indo['features'][0]['properties']
                 prop_key = 'Propinsi' if 'Propinsi' in first_feat else list(first_feat.keys())[0]
 
-                # Ambil daftar nama persis dari file geojson untuk pencocokan case-insensitive
                 geojson_props = [f['properties'][prop_key] for f in geojson_indo['features']]
                 name_lookup = {str(p).strip().upper(): p for p in geojson_props}
                 
-                # Selaraskan Nama_Geo agar sama persis dengan properti di GeoJSON
                 df_map_agg['Matched_Name'] = df_map_agg['Nama_Geo'].apply(lambda x: name_lookup.get(x.upper(), x))
 
                 fig_map = px.choropleth(
