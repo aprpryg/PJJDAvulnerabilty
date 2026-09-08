@@ -39,7 +39,7 @@ def train_models_and_evaluate(data):
     y_pred_rf = rf.predict(X_test)
     y_prob_rf = rf.predict_proba(X_test)[:, 1]
     
-    # Model 2: Logistic Regression (Untuk Pembanding)
+    # Model 2: Logistic Regression
     lr = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
     lr.fit(X_train, y_train)
     y_pred_lr = lr.predict(X_test)
@@ -123,11 +123,14 @@ with tab1:
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total households", f"{total_pop/1_000_000:,.1f} juta")
+    
     col2.metric("High vulnerability", f"{(high_vuln_pop/total_pop)*100:.1f}%")
-    col2.caption("Definisi: Memenuhi ≥ 2 dari 3 indikator deprivasi.")
+    col2.caption("📝 **Note:** Keluarga yang mengalami minimal 2 masalah dasar sekaligus (ekonomi lemah, kurang gizi, atau tanpa listrik).")
+    
     col3.metric("Assistance coverage", f"{(assisted_pop/total_pop)*100:.1f}%")
+    
     col4.metric("Residual vulnerability", f"{(residual_vuln_pop/assisted_pop)*100:.1f}%")
-    col4.caption("Denominator: Persentase rentan *di antara* kelompok penerima bantuan.")
+    col4.caption("📝 **Note:** Persentase keluarga yang masih hidup dalam kondisi rentan **meskipun** sudah menerima bansos.")
 
     st.divider()
     st.subheader("Vulnerability by Province")
@@ -140,7 +143,6 @@ with tab1:
         prov_pct['Vuln_Pct'] = prov_pct['Vuln_Pct'].round(1) 
         prov_pct['Nama_Provinsi'] = prov_pct['M101'].map(prov_map).fillna(prov_pct['M101'].astype(str))
         
-        # --- FIX #13: LEGENDA DISKRIT PADA PETA ---
         def categorize_vuln(val):
             if val < 20: return "Low (0-20%)"
             elif val <= 40: return "Moderate (20-40%)"
@@ -164,7 +166,6 @@ with tab1:
                 st.plotly_chart(fig_map, use_container_width=True)
                 
         with col_bar_view:
-            # --- FIX #12: TOP 10 / BOTTOM 10 DENGAN TOGGLE ---
             view_all = st.checkbox("View all 38 provinces")
             if view_all:
                 plot_df = prov_pct.sort_values('Vuln_Pct', ascending=True)
@@ -218,6 +219,7 @@ with tab2:
             <td style="border: 1px solid #ddd; padding:15px; background-color:#fff0f0;">
                 <span style="font-size:20px;">🔴 B</span><br>
                 <span style="font-size:12px; font-weight:bold;">Potentially Underserved</span><br>
+                <span style="font-size:11px; font-style:italic;">(Warga rentan yang luput dari bansos)</span><br>
                 <span style="font-size:14px; color:gray;">{kuadran_B:.1f}%</span>
             </td>
           </tr>
@@ -231,6 +233,7 @@ with tab2:
             <td style="border: 1px solid #ddd; padding:15px; background-color:#fff8eb;">
                 <span style="font-size:20px;">🟠 D</span><br>
                 <span style="font-size:12px; font-weight:bold;">Residual Vulnerability</span><br>
+                <span style="font-size:11px; font-style:italic;">(Sudah dibantu tapi masih rentan)</span><br>
                 <span style="font-size:14px; color:gray;">{kuadran_D:.1f}%</span>
             </td>
           </tr>
@@ -242,7 +245,6 @@ with tab2:
                "* **Kuadran B (Potentially Underserved):** Mengindikasikan *potential social protection gap* yang perlu diverifikasi dengan data Regsosek.\n"
                "* **Kuadran D (Residual Vulnerability):** Menunjukkan perlunya analisis kecukupan nilai transfer, ketepatan sasaran, dan intervensi pendamping.")
 
-    # --- FIX #4 & #8: INTERAKTIVITAS KUADRAN & PROFIL KOMPARATIF ---
     st.divider()
     st.markdown("### Profile Filter")
     sel_kuadran = st.radio("Tampilkan karakteristik demografi dan deprivasi untuk:", 
@@ -268,7 +270,6 @@ with tab2:
 with tab3:
     st.subheader("Model Performance & Comparison")
     
-    # --- FIX #17: MODEL COMPARISON & CONFUSION MATRIX ---
     col_mc1, col_mc2, col_mc3 = st.columns([1.2, 1, 1.5])
     
     with col_mc1:
@@ -278,6 +279,10 @@ with tab3:
             {"Model": "Logistic Regression", "AUC": model_metrics['LR']['auc'], "Precision": model_metrics['LR']['precision'], "Recall": model_metrics['LR']['recall'], "F1": model_metrics['LR']['f1']}
         ])
         st.dataframe(comp_df.style.format({"AUC": "{:.3f}", "Precision": "{:.3f}", "Recall": "{:.3f}", "F1": "{:.3f}"}), hide_index=True)
+        st.caption("📝 **Keterangan Metrik:**\n"
+                   "- **AUC:** Akurasi model dalam membedakan rumah tangga rentan vs tidak rentan.\n"
+                   "- **Precision:** Ketepatan deteksi (persentase tebakan 'rentan' yang benar-benar rentan di lapangan).\n"
+                   "- **Recall:** Keberhasilan melacak warga rentan tanpa terlewat.")
     
     with col_mc2:
         st.markdown("**2. RF Confusion Matrix**")
@@ -286,6 +291,7 @@ with tab3:
                            x=['Low Vuln', 'High Vuln'], y=['Low Vuln', 'High Vuln'])
         fig_cm.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=200)
         st.plotly_chart(fig_cm, use_container_width=True)
+        st.caption("📝 **Note:** Matriks rincian tebakan model yang benar vs salah. Kotak biru gelap menunjukkan tebakan sistem yang tepat sasaran.")
         
     with col_mc3:
         st.markdown("**3. Top Vulnerability Drivers**")
@@ -296,6 +302,7 @@ with tab3:
         )
         fig_feat.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=250)
         st.plotly_chart(fig_feat, use_container_width=True)
+        st.caption("📝 **Note:** Urutan faktor-faktor struktural utama yang paling menentukan apakah sebuah keluarga rentan atau tidak.")
 
 # ---------------------------------------------------------------------
 # TAB 4: RISK SIMULATOR
@@ -337,17 +344,16 @@ with tab4:
             prob = model.predict_proba(input_df)[0][1]
             
             st.info("### Output")
-            st.write(f"Untuk karakteristik tersebut, model mengestimasi probabilitas kerentanan sebesar **{prob*100:.1f}%**.")
+            st.write(f"Untuk karakteristik tersebut, sistem mengestimasi probabilitas risiko kerentanan sebesar **{prob*100:.1f}%**.")
             
             if prob >= 0.5:
-                st.error("**Risk Category: HIGH**")
+                st.error("**Risk Category: HIGH (RENTAN)**")
             else:
-                st.success("**Risk Category: LOW**")
+                st.success("**Risk Category: LOW (AMAN)**")
             
-            # --- FIX #18: TOP CONTRIBUTING CHARACTERISTICS ---
             st.markdown("**Karakteristik Pendorong (Top Drivers):**")
             top_3_global = feature_importances.head(3)['Feature'].tolist()
-            st.write("Berdasarkan arsitektur *Random Forest*, variabel berikut memberikan bobot asosiasi terbesar terhadap skor akhir Anda:")
+            st.write("Skor kerentanan pada keluarga ini paling kuat didorong oleh faktor-faktor berikut:")
             for f in top_3_global:
                 if f == 'penerima_bansos':
                     st.write(f"- Status Bantuan Sosial ({'Menerima' if sim_bansos==1 else 'Tidak Menerima'})")
@@ -356,4 +362,4 @@ with tab4:
                 elif f.startswith('krt_pendidikan'):
                     st.write(f"- Status Pendidikan KRT")
                 
-            st.caption("⚠️ **Analytical Caveat:** Skor di atas merupakan estimasi pola asosiatif berdasarkan data *cross-sectional* SUSENAS. Fitur ini tidak digunakan untuk menyimpulkan dampak kausal program perlindungan sosial.")
+            st.caption("⚠️ **Analytical Caveat:** Angka ini adalah perkiraan risiko berdasarkan pola data SUSENAS masa lalu, bukan alat untuk mengukur dampak sebab-akibat program perlindungan sosial.")
