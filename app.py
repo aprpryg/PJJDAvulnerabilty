@@ -93,7 +93,13 @@ def train_models_and_evaluate(data):
 
 @st.cache_data
 def load_geojson():
-    url = "https://raw.githubusercontent.com/superpikar/indonesia-geojson/master/indonesia-province-simple.json"
+    # Sumber lama (superpikar/indonesia-province-simple.json) hanya memiliki 32 fitur
+    # dan menggunakan nama usang "IRIAN JAYA BARAT/TENGAH/TIMUR" tanpa entri "IRIAN JAYA"
+    # polos maupun "PAPUA" — akibatnya alias fallback di bawah tidak pernah terpicu dan
+    # seluruh wilayah Papua modern (6 provinsi) tampil kosong/putih di peta.
+    # Sumber baru ini mencakup 38 provinsi resmi (termasuk hasil pemekaran Papua 2022)
+    # dengan properti nama provinsi di key "PROVINSI".
+    url = "https://raw.githubusercontent.com/denyherianto/indonesia-geojson-topojson-maps-with-38-provinces/main/GeoJSON/indonesia-38-provinces.geojson"
     try:
         response = urllib.request.urlopen(url)
         return json.loads(response.read())
@@ -175,21 +181,12 @@ with tab1:
         
         prov_pct['Category'] = prov_pct['Vuln_Pct'].apply(categorize_vuln)
         
-        import difflib
-
-        # --- KEMBALIKAN KE LOGIKA NORMALISASI AWAL (EXACT MATCH) ---
-        # 1. Agregasi provinsi pemekaran kembali ke provinsi induk (Standar 34 Provinsi)
-        pemekaran_dict = {
-            'PAPUA SELATAN': 'PAPUA',
-            'PAPUA TENGAH': 'PAPUA',
-            'PAPUA PEGUNUNGAN': 'PAPUA',
-            'PAPUA BARAT DAYA': 'PAPUA BARAT',
-        }
-        
-        df_map = prov_pct.copy()
-        df_map['Nama_Provinsi'] = df_map['Nama_Provinsi'].replace(pemekaran_dict)
-        df_map_agg = df_map.groupby('Nama_Provinsi', as_index=False)['Vuln_Pct'].mean()
-        df_map_agg['Category'] = df_map_agg['Vuln_Pct'].apply(categorize_vuln)
+        # Sumber GeoJSON baru sudah mencakup 38 provinsi resmi (termasuk 4 provinsi
+        # hasil pemekaran Papua 2022: Papua Selatan, Papua Tengah, Papua Pegunungan,
+        # Papua Barat Daya), jadi peta TIDAK perlu lagi diagregasi ke 34 provinsi induk.
+        # Ini juga membuat peta konsisten dengan bar chart di sebelahnya, yang sudah
+        # menampilkan granularitas 38 provinsi ("View all 38 provinces").
+        df_map_agg = prov_pct.copy()
 
         st.info("Top 5 kerentanan tertinggi didominasi wilayah Timur. Intervensi memerlukan pembangunan infrastruktur dasar yang struktural.")
 
@@ -200,22 +197,48 @@ with tab1:
                 
                 # Ambil properti key dan daftar nama persis dari file GeoJSON
                 first_feat = geojson_indo['features'][0]['properties']
-                prop_key = 'Propinsi' if 'Propinsi' in first_feat else list(first_feat.keys())[0]
+                prop_key = 'PROVINSI' if 'PROVINSI' in first_feat else (
+                    'Propinsi' if 'Propinsi' in first_feat else list(first_feat.keys())[0]
+                )
                 geojson_names = [f['properties'][prop_key] for f in geojson_indo['features']]
                 
                 # Buat kamus: Kunci UPPERCASE (dari SUSENAS) -> Nilai Format Asli (dari GeoJSON)
                 name_lookup = {str(name).strip().upper(): name for name in geojson_names}
                 
-                # Tambahkan jaring pengaman alias HANYA JIKA GeoJSON menggunakan nama lama
-                if 'IRIAN JAYA' in name_lookup and 'PAPUA' not in name_lookup:
-                    name_lookup['PAPUA'] = name_lookup['IRIAN JAYA']
-                if 'IRIAN JAYA BARAT' in name_lookup and 'PAPUA BARAT' not in name_lookup:
-                    name_lookup['PAPUA BARAT'] = name_lookup['IRIAN JAYA BARAT']
-                if 'JAKARTA RAYA' in name_lookup and 'DKI JAKARTA' not in name_lookup:
-                    name_lookup['DKI JAKARTA'] = name_lookup['JAKARTA RAYA']
+                # Jaring pengaman alias untuk variasi penamaan yang masih mungkin muncul
+                # di sumber GeoJSON (nama lama/ejaan berbeda), diterapkan hanya jika
+                # target belum ada persis di file yang sedang dipakai.
+                alias_candidates = {
+                    'DKI JAKARTA': ['JAKARTA RAYA'],
+                    'DI YOGYAKARTA': ['DAERAH ISTIMEWA YOGYAKARTA'],
+                    'PAPUA': ['IRIAN JAYA'],
+                    'PAPUA BARAT': ['IRIAN JAYA BARAT'],
+                    'BANGKA BELITUNG': ['KEPULAUAN BANGKA BELITUNG'],
+                }
+                for target, sources in alias_candidates.items():
+                    if target not in name_lookup:
+                        for src in sources:
+                            if src in name_lookup:
+                                name_lookup[target] = name_lookup[src]
+                                break
                 
                 # Terapkan pemetaan secara eksak tanpa fuzzy matching
                 df_map_agg['Matched_Name'] = df_map_agg['Nama_Provinsi'].apply(lambda x: name_lookup.get(x.upper(), x))
+                
+                # Diagnostik: tandai provinsi yang gagal ter-match ke GeoJSON, agar
+                # tidak diam-diam tampil kosong di peta seperti sebelumnya.
+                geojson_name_set = set(str(n).strip().upper() for n in geojson_names)
+                unmatched = sorted(
+                    df_map_agg.loc[
+                        ~df_map_agg['Matched_Name'].str.strip().str.upper().isin(geojson_name_set),
+                        'Nama_Provinsi'
+                    ].unique()
+                )
+                if unmatched:
+                    st.warning(
+                        "⚠️ Provinsi berikut tidak ditemukan padanannya di file GeoJSON "
+                        f"dan tidak akan tampil berwarna di peta: {', '.join(unmatched)}"
+                    )
 
                 fig_map = px.choropleth(
                     df_map_agg,
