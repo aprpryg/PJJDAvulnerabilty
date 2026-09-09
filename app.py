@@ -179,20 +179,25 @@ with tab1:
 
         import pandas as pd
 
-        # --- FIX PETA (DETEKSI GEOJSON OTOMATIS & NATIVE HOVER) ---
-        pemekaran_dict = {
+        # --- FIX PETA (MENYESUAIKAN 32 PROVINSI GEOJSON LAMA) ---
+        # 1. Agregasi provinsi pemekaran yang poligonnya TIDAK ADA di GeoJSON ini
+        penggabungan_prov = {
+            # Pemekaran Papua
             'PAPUA SELATAN': 'PAPUA',
             'PAPUA TENGAH': 'PAPUA',
             'PAPUA PEGUNUNGAN': 'PAPUA',
             'PAPUA BARAT DAYA': 'PAPUA BARAT',
+            # Pemekaran lain yang belum ada di peta 32 Provinsi
+            'KEPULAUAN RIAU': 'RIAU',
+            'SULAWESI BARAT': 'SULAWESI SELATAN',
+            'KALIMANTAN UTARA': 'KALIMANTAN TIMUR',
         }
         
         df_map = prov_pct.copy()
-        # Bersihkan spasi berlebih dari data BPS
         df_map['Nama_Display'] = df_map['Nama_Provinsi'].astype(str).str.strip().str.upper()
-        df_map['Nama_Display'] = df_map['Nama_Display'].replace(pemekaran_dict)
+        df_map['Nama_Display'] = df_map['Nama_Display'].replace(penggabungan_prov)
         
-        # Agregasi data BPS ke 34 provinsi
+        # Hitung ulang rata-rata untuk provinsi yang digabung kembali
         df_map_agg = df_map.groupby('Nama_Display', as_index=False)['Vuln_Pct'].mean()
         df_map_agg['Category'] = df_map_agg['Vuln_Pct'].apply(categorize_vuln)
 
@@ -201,77 +206,45 @@ with tab1:
             if geojson_indo:
                 color_map = {"Low (0-20%)": "#fee5d9", "Moderate (20-40%)": "#fb6a4a", "High (>40%)": "#a50f15"}
                 
-                # 1. Ambil Properti & Nama Persis dari GeoJSON
                 first_feat = geojson_indo['features'][0]['properties']
                 prop_key = 'Propinsi' if 'Propinsi' in first_feat else list(first_feat.keys())[0]
                 
-                # Kamus untuk menyimpan nama kapital vs format asli GeoJSON
+                # Kamus Casing Asli GeoJSON
                 geo_lookup = {str(f['properties'][prop_key]).strip().upper(): f['properties'][prop_key] for f in geojson_indo['features']}
-                geo_names = list(geo_lookup.keys())
 
-                # 2. Rekonstruksi Baris (Pencocokan Dinamis Tanpa Asumsi)
+                # 2. Kamus Alias (Menangani salah ketik / nama aneh di dalam GeoJSON)
+                alias_peta = {
+                    'BANTEN': 'PROBANTEN',
+                    'ACEH': 'DI. ACEH',
+                    'NANGGROE ACEH DARUSSALAM': 'DI. ACEH',
+                    'NUSA TENGGARA BARAT': 'NUSATENGGARA BARAT',
+                    'KEPULAUAN BANGKA BELITUNG': 'BANGKA BELITUNG',
+                    'BANGKA BELITUNG': 'BANGKA BELITUNG',
+                    'DI YOGYAKARTA': 'DAERAH ISTIMEWA YOGYAKARTA'
+                }
+
                 new_rows = []
                 for _, row in df_map_agg.iterrows():
                     prov_name = row['Nama_Display']
                     
-                    # --- CEK OTOMATIS TIPE PETA PAPUA DI GEOJSON ANDA ---
+                    # Logika Pemecahan Poligon Papua
                     if prov_name == 'PAPUA':
-                        if 'IRIAN JAYA TENGAH' in geo_names and 'IRIAN JAYA TIMUR' in geo_names:
-                            # Jika GeoJSON lawas (Terpecah 3)
-                            r1 = row.to_dict(); r1['Matched_Name'] = geo_lookup['IRIAN JAYA TENGAH']
-                            r2 = row.to_dict(); r2['Matched_Name'] = geo_lookup['IRIAN JAYA TIMUR']
-                            new_rows.extend([r1, r2])
-                        elif 'IRIAN JAYA' in geo_names:
-                            # Jika GeoJSON menggunakan nama lama
-                            r1 = row.to_dict(); r1['Matched_Name'] = geo_lookup['IRIAN JAYA']
-                            new_rows.append(r1)
-                        elif 'PAPUA' in geo_names:
-                            # Jika GeoJSON standar 
-                            r1 = row.to_dict(); r1['Matched_Name'] = geo_lookup['PAPUA']
-                            new_rows.append(r1)
-                            
+                        r1 = row.to_dict(); r1['Matched_Name'] = geo_lookup.get('IRIAN JAYA TENGAH', 'IRIAN JAYA TENGAH')
+                        r2 = row.to_dict(); r2['Matched_Name'] = geo_lookup.get('IRIAN JAYA TIMUR', 'IRIAN JAYA TIMUR')
+                        new_rows.extend([r1, r2])
                     elif prov_name == 'PAPUA BARAT':
-                        if 'IRIAN JAYA BARAT' in geo_names:
-                            r1 = row.to_dict(); r1['Matched_Name'] = geo_lookup['IRIAN JAYA BARAT']
-                            new_rows.append(r1)
-                        elif 'PAPUA BARAT' in geo_names:
-                            r1 = row.to_dict(); r1['Matched_Name'] = geo_lookup['PAPUA BARAT']
-                            new_rows.append(r1)
-                            
+                        r1 = row.to_dict(); r1['Matched_Name'] = geo_lookup.get('IRIAN JAYA BARAT', 'IRIAN JAYA BARAT')
+                        new_rows.append(r1)
                     else:
-                        # --- PROVINSI LAINNYA (TERMASUK BANTEN & JAKARTA) ---
-                        matched_key = prov_name
-                        
-                        # Cek alias hanya jika nama alternatif tersebut BENAR-BENAR ada di GeoJSON
-                        if prov_name == 'DKI JAKARTA' and 'JAKARTA RAYA' in geo_names:
-                            matched_key = 'JAKARTA RAYA'
-                        elif prov_name == 'DI YOGYAKARTA' and 'DAERAH ISTIMEWA YOGYAKARTA' in geo_names:
-                            matched_key = 'DAERAH ISTIMEWA YOGYAKARTA'
-                        elif prov_name == 'BANGKA BELITUNG' and 'KEPULAUAN BANGKA BELITUNG' in geo_names:
-                            matched_key = 'KEPULAUAN BANGKA BELITUNG'
+                        # Logika Provinsi Umum (Cek Kamus Alias Dulu)
+                        matched_key = alias_peta.get(prov_name, prov_name)
                         
                         r1 = row.to_dict()
-                        if matched_key in geo_lookup:
-                            r1['Matched_Name'] = geo_lookup[matched_key]
-                        else:
-                            # SAFE FALLBACK: Fuzzy matching khusus untuk provinsi yang gagal exact match (misal Banten typo)
-                            import difflib
-                            closest = difflib.get_close_matches(matched_key, geo_names, n=1, cutoff=0.5)
-                            if closest:
-                                r1['Matched_Name'] = geo_lookup[closest[0]]
-                            else:
-                                r1['Matched_Name'] = prov_name
-                        
+                        r1['Matched_Name'] = geo_lookup.get(matched_key, prov_name)
                         new_rows.append(r1)
                         
                 df_map_final = pd.DataFrame(new_rows)
                 
-                # --- FITUR DIAGNOSTIK (Bisa Anda hapus nanti jika peta sudah sempurna) ---
-                unmatched = set(df_map_final['Matched_Name']) - set(geo_lookup.values())
-                if unmatched:
-                    st.warning(f"Peringatan Data Geospasial: Provinsi berikut tidak memiliki poligon di file GeoJSON Anda: {unmatched}")
-                
-                # 3. Plotting dengan Native Hover (Menghindari Bug Indeks)
                 fig_map = px.choropleth(
                     df_map_final,
                     geojson=geojson_indo,
@@ -280,12 +253,11 @@ with tab1:
                     color="Category",
                     color_discrete_map=color_map,
                     category_orders={"Category": ["Low (0-20%)", "Moderate (20-40%)", "High (>40%)"]},
-                    hover_name="Nama_Display", # Memaksa Plotly menampilkan nama standar (Papua, DKI Jakarta, dll)
-                    hover_data={"Matched_Name": False, "Category": False, "Vuln_Pct": ':.1f'}, # Menampilkan angka persentase
+                    hover_name="Nama_Display", # Menampilkan nama BPS standar saat disorot kursor
+                    hover_data={"Matched_Name": False, "Category": False, "Vuln_Pct": ':.1f'}, 
                     labels={"Vuln_Pct": "Rentan (%)"}
                 )
                 
-                # HAPUS update_traces(hovertemplate) yang bermasalah sebelumnya
                 fig_map.update_geos(fitbounds="locations", visible=False)
                 fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=550, legend_title="Risk Level")
                 st.plotly_chart(fig_map, use_container_width=True)
