@@ -4,7 +4,7 @@ Proyek ini adalah *Dashboard* Analitik interaktif berbasis **Streamlit** untuk m
 
 Analisis ini menggunakan dataset **Survei Sosial Ekonomi Nasional (SUSENAS) September 2025** (Modul Kesehatan & Perumahan, Konsumsi Pengeluaran, dan Modul Individu).
 
-**🌐 [Lihat Live Dashboard Disini](https://pjjda-vulnerabilty-djsef.streamlit.app/)** *(Ganti dengan URL asli Anda jika berbeda)*
+**🌐 [Lihat Live Dashboard Disini](https://pjjda-vulnerabilty-djsef.streamlit.app/)**
 
 ---
 
@@ -48,12 +48,3 @@ Proyek ini dibangun melalui 5 tahapan pemrosesan data (dari data mentah hingga *
 * **Explainability:** Menggunakan *Grouped Feature Importance* (MDI) untuk mengagregasi fitur spasial (Provinsi) dan demografi (Pendidikan) agar bobot risiko struktural mudah diinterpretasikan tanpa kebingungan kardinalitas.
 
 ---
-
-## 💻 Cara Menjalankan Aplikasi Secara Lokal
-
-Jika Anda ingin menjalankan *dashboard* ini di komputer lokal, ikuti langkah berikut:
-
-1. *Clone* repositori ini:
-   ```bash
-   git clone [https://github.com/username-anda/nama-repo-anda.git](https://github.com/username-anda/nama-repo-anda.git)
-   cd nama-repo-anda
