@@ -175,19 +175,19 @@ with tab1:
         
         prov_pct['Category'] = prov_pct['Vuln_Pct'].apply(categorize_vuln)
         
-        # --- FIX MAP PAPUA: Normalisasi Nama Sesuai GeoJSON Superpikar ---
-        geojson_name_cleaner = {
+        import difflib
+
+        # --- FIX PETA INDONESIA & PAPUA (MENGGUNAKAN DIFFLIB) ---
+        # Hanya gabungkan provinsi pemekaran baru ke provinsi induk
+        pemekaran_dict = {
             'PAPUA SELATAN': 'PAPUA',
             'PAPUA TENGAH': 'PAPUA',
             'PAPUA PEGUNUNGAN': 'PAPUA',
             'PAPUA BARAT DAYA': 'PAPUA BARAT',
-            'DI YOGYAKARTA': 'DAERAH ISTIMEWA YOGYAKARTA',
-            'DKI JAKARTA': 'JAKARTA RAYA', 
         }
-
-        df_map = prov_pct.copy()
-        df_map['Nama_Geo'] = df_map['Nama_Provinsi'].replace(geojson_name_cleaner)
         
+        df_map = prov_pct.copy()
+        df_map['Nama_Geo'] = df_map['Nama_Provinsi'].replace(pemekaran_dict)
         df_map_agg = df_map.groupby('Nama_Geo', as_index=False)['Vuln_Pct'].mean()
         df_map_agg['Category'] = df_map_agg['Vuln_Pct'].apply(categorize_vuln)
 
@@ -198,40 +198,39 @@ with tab1:
             if geojson_indo:
                 color_map = {"Low (0-20%)": "#fee5d9", "Moderate (20-40%)": "#fb6a4a", "High (>40%)": "#a50f15"}
                 
-                # Cek kunci properti di GeoJSON (mendeteksi apakah pakai 'Propinsi', 'NAME_1', dll)
                 first_feat = geojson_indo['features'][0]['properties']
-                possible_keys = ['Propinsi', 'provinsi', 'NAME_1', 'name_1', 'state']
-                prop_key = next((k for k in possible_keys if k in first_feat), list(first_feat.keys())[0])
+                prop_key = 'Propinsi' if 'Propinsi' in first_feat else list(first_feat.keys())[0]
 
-                # Buat kamus (lookup) nama persis dari GeoJSON
-                geojson_props = [str(f['properties'][prop_key]) for f in geojson_indo['features']]
-                name_lookup = {p.strip().upper(): p for p in geojson_props}
+                # Ambil nama asli dari GeoJSON
+                geojson_names = [str(f['properties'][prop_key]) for f in geojson_indo['features']]
+                name_lookup = {p.strip().upper(): p for p in geojson_names}
                 
-                # Fungsi Exact Matching & Alias Bebas Tabrakan
-                def get_matched_name(prov_name):
-                    prov_upper = str(prov_name).upper()
+                def match_province_name(susenas_name):
+                    susenas_name_upper = str(susenas_name).upper()
                     
-                    # 1. Jika namanya sama persis di GeoJSON
-                    if prov_upper in name_lookup:
-                        return name_lookup[prov_upper]
+                    # 1. Jika nama sama persis
+                    if susenas_name_upper in name_lookup:
+                        return name_lookup[susenas_name_upper]
                     
-                    # 2. Alias eksplisit jika GeoJSON menggunakan penamaan lama/berbeda
-                    # Tidak menggunakan fungsi 'in' (substring) untuk mencegah salah sasaran
+                    # 2. Pencadangan khusus untuk ejaan usang/alternatif
                     alias_dict = {
-                        'PAPUA': 'IRIAN JAYA',
-                        'PAPUA BARAT': 'IRIAN JAYA BARAT',
                         'DI YOGYAKARTA': 'DAERAH ISTIMEWA YOGYAKARTA',
                         'DKI JAKARTA': 'JAKARTA RAYA',
-                        'BANGKA BELITUNG': 'KEPULAUAN BANGKA BELITUNG'
+                        'BANGKA BELITUNG': 'KEPULAUAN BANGKA BELITUNG',
+                        'PAPUA': 'IRIAN JAYA',
+                        'PAPUA BARAT': 'IRIAN JAYA BARAT'
                     }
-                    
-                    if prov_upper in alias_dict and alias_dict[prov_upper] in name_lookup:
-                        return name_lookup[alias_dict[prov_upper]]
-                        
-                    return prov_name
+                    if susenas_name_upper in alias_dict and alias_dict[susenas_name_upper] in name_lookup:
+                        return name_lookup[alias_dict[susenas_name_upper]]
 
-                # Terapkan fungsi yang sudah diperbaiki
-                df_map_agg['Matched_Name'] = df_map_agg['Nama_Geo'].apply(get_matched_name)
+                    # 3. Fuzzy Matching (Mencocokkan string yang paling mirip)
+                    closest_matches = difflib.get_close_matches(susenas_name_upper, name_lookup.keys(), n=1, cutoff=0.5)
+                    if closest_matches:
+                        return name_lookup[closest_matches[0]]
+                    
+                    return susenas_name
+
+                df_map_agg['Matched_Name'] = df_map_agg['Nama_Geo'].apply(match_province_name)
 
                 fig_map = px.choropleth(
                     df_map_agg,
