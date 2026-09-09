@@ -1,3 +1,4 @@
+from plotly import data
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -22,14 +23,14 @@ def load_data():
 
 @st.cache_resource
 def train_models_and_evaluate(data):
-    features = ['M101', 'krt_jk', 'krt_umur', 'krt_pendidikan', 'krt_bekerja', 'M1501', 'penerima_bansos']
-    target = 'high_vulnerability'
-    df_ml = data[features + [target]].dropna().copy()
-    
-    df_ml['krt_bekerja'] = df_ml['krt_bekerja'].apply(lambda x: 1 if str(x).strip() == 'A' else 0)
-    
-    X = pd.get_dummies(df_ml[features], columns=['M101', 'M1501', 'krt_pendidikan'], drop_first=True)
-    y = df_ml[target]
+features_all = ['M101', 'krt_jk', 'krt_umur', 'krt_pendidikan', 'krt_bekerja', 'M1501', 'penerima_bansos']
+target = 'high_vulnerability'
+df_ml = data[features_all + [target]].dropna().copy()
+df_ml['krt_bekerja'] = df_ml['krt_bekerja'].apply(lambda x: 1 if str(x).strip() == 'A' else 0)
+
+X_features = df_ml.drop(columns=[target, 'penerima_bansos'])
+X = pd.get_dummies(X_features, columns=['M101', 'M1501', 'krt_pendidikan'], drop_first=True)
+y = df_ml[target]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
@@ -75,8 +76,6 @@ def train_models_and_evaluate(data):
             return 'Tingkat Pendidikan KRT'
         elif feat.startswith('M1501_'):
             return 'Status Kepemilikan Rumah'
-        elif feat == 'penerima_bansos':
-            return 'Status Penerima Bansos'
         elif feat == 'krt_umur':
             return 'Usia Kepala RT'
         elif feat == 'krt_jk':
@@ -440,11 +439,11 @@ with tab4:
             
     with col_result:
         if submit_btn:
+            # Hapus 'penerima_bansos' dari input_dict
             input_dict = {
                 'krt_jk': sim_jk,
                 'krt_umur': sim_umur,
                 'krt_bekerja': sim_kerja,
-                'penerima_bansos': sim_bansos,
                 f'M101_{float(sim_prov)}': 1,
                 f'M1501_{float(sim_rumah)}': 1,
                 f'krt_pendidikan_{float(sim_pend)}': 1
@@ -462,11 +461,15 @@ with tab4:
             else:
                 st.success("**Risk Category: LOW (AMAN)**")
             
+            # Perbaikan format string agar tidak error/tampil mentah di layar
+            dict_pendidikan = {3: 'SD', 8: 'SMP', 13: 'SMA', 21: 'S1', 25: 'Tidak Tamat SD'}
+            nama_pendidikan = dict_pendidikan.get(sim_pend, str(sim_pend))
+            
             st.markdown("**Karakteristik Pendorong (Top Drivers):**")
             st.write("Skor kerentanan pada keluarga ini paling kuat didorong oleh faktor-faktor utama:")
-            st.write(f"- Status Bantuan Sosial: {'Menerima Bansos' if sim_bansos==1 else 'Tidak Menerima Bansos'}")
+            # Hapus teks Bansos karena bukan lagi driver model
             st.write(f"- Siklus Usia Kepala RT: {sim_umur} Tahun")
             st.write(f"- Wilayah Domisili: {prov_map.get(sim_prov, str(sim_prov))}")
-            st.write(f"- Jenjang Pendidikan: {{3: 'SD', 8: 'SMP', 13: 'SMA', 21: 'S1', 25: 'Tidak Tamat SD'}}[sim_pend]")
+            st.write(f"- Jenjang Pendidikan: {nama_pendidikan}")
                 
             st.caption("📝 Angka ini adalah perkiraan risiko berdasarkan pola data SUSENAS masa lalu, bukan alat mutlak untuk mengukur dampak sebab-akibat program perlindungan sosial.")
