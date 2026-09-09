@@ -23,14 +23,15 @@ def load_data():
 
 @st.cache_resource
 def train_models_and_evaluate(data):
-features_all = ['M101', 'krt_jk', 'krt_umur', 'krt_pendidikan', 'krt_bekerja', 'M1501', 'penerima_bansos']
-target = 'high_vulnerability'
-df_ml = data[features_all + [target]].dropna().copy()
-df_ml['krt_bekerja'] = df_ml['krt_bekerja'].apply(lambda x: 1 if str(x).strip() == 'A' else 0)
-
-X_features = df_ml.drop(columns=[target, 'penerima_bansos'])
-X = pd.get_dummies(X_features, columns=['M101', 'M1501', 'krt_pendidikan'], drop_first=True)
-y = df_ml[target]
+    features_all = ['M101', 'krt_jk', 'krt_umur', 'krt_pendidikan', 'krt_bekerja', 'M1501', 'penerima_bansos']
+    target = 'high_vulnerability'
+    df_ml = data[features_all + [target]].dropna().copy()
+    
+    df_ml['krt_bekerja'] = df_ml['krt_bekerja'].apply(lambda x: 1 if str(x).strip() == 'A' else 0)
+    
+    X_features = df_ml.drop(columns=[target, 'penerima_bansos'])
+    X = pd.get_dummies(X_features, columns=['M101', 'M1501', 'krt_pendidikan'], drop_first=True)
+    y = df_ml[target]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
