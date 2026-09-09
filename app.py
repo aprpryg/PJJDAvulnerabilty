@@ -234,6 +234,7 @@ with tab1:
                 first_feat = geojson_indo['features'][0]['properties']
                 prop_key = 'Propinsi' if 'Propinsi' in first_feat else list(first_feat.keys())[0]
 
+                # Masukkan hover_name dan hover_data ke dalam px.choropleth agar disinkronisasi otomatis
                 fig_map = px.choropleth(
                     df_map_final,
                     geojson=geojson_indo,
@@ -241,14 +242,16 @@ with tab1:
                     locations="Matched_Name",
                     color="Category",
                     color_discrete_map=color_map,
-                    category_orders={"Category": ["Low (0-20%)", "Moderate (20-40%)", "High (>40%)"]}
+                    category_orders={"Category": ["Low (0-20%)", "Moderate (20-40%)", "High (>40%)"]},
+                    hover_name="Nama_Display", 
+                    hover_data={"Matched_Name": False, "Category": False, "Vuln_Pct": True}
                 )
+                
                 fig_map.update_geos(fitbounds="locations", visible=False)
                 
-                # --- TRIK HOVER: Gunakan Nama_Display (customdata[1]) bukan %{location} ---
+                # Gunakan variabel internal bawaan hovertext dan customdata dari Plotly Express
                 fig_map.update_traces(
-                    hovertemplate="<b>%{customdata[1]}</b><br>Rentan: %{customdata[0]:.1f}%<extra></extra>",
-                    customdata=df_map_final[['Vuln_Pct', 'Nama_Display']]
+                    hovertemplate="<b>%{hovertext}</b><br>Rentan: %{customdata[0]:.1f}%<extra></extra>"
                 )
                 fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0}, height=550, legend_title="Risk Level")
                 st.plotly_chart(fig_map, use_container_width=True)
