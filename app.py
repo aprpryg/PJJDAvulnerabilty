@@ -207,29 +207,31 @@ with tab1:
                 geojson_props = [str(f['properties'][prop_key]) for f in geojson_indo['features']]
                 name_lookup = {p.strip().upper(): p for p in geojson_props}
                 
-                # Fungsi Smart Matching
+                # Fungsi Exact Matching & Alias Bebas Tabrakan
                 def get_matched_name(prov_name):
                     prov_upper = str(prov_name).upper()
-                    # 1. Jika namanya sama persis
+                    
+                    # 1. Jika namanya sama persis di GeoJSON
                     if prov_upper in name_lookup:
                         return name_lookup[prov_upper]
-                    # 2. Jika GeoJSON masih pakai nama Irian Jaya (versi lama)
-                    if prov_upper == 'PAPUA' and 'IRIAN JAYA' in name_lookup:
-                        return name_lookup['IRIAN JAYA']
-                    if prov_upper == 'PAPUA BARAT' and 'IRIAN JAYA BARAT' in name_lookup:
-                        return name_lookup['IRIAN JAYA BARAT']
-                    # 3. Pencocokan kata parsial (misal mengabaikan typo/spasi berlebih)
-                    for geo_name in name_lookup.keys():
-                        if prov_upper in geo_name or geo_name in prov_upper:
-                            return name_lookup[geo_name]
+                    
+                    # 2. Alias eksplisit jika GeoJSON menggunakan penamaan lama/berbeda
+                    # Tidak menggunakan fungsi 'in' (substring) untuk mencegah salah sasaran
+                    alias_dict = {
+                        'PAPUA': 'IRIAN JAYA',
+                        'PAPUA BARAT': 'IRIAN JAYA BARAT',
+                        'DI YOGYAKARTA': 'DAERAH ISTIMEWA YOGYAKARTA',
+                        'DKI JAKARTA': 'JAKARTA RAYA',
+                        'BANGKA BELITUNG': 'KEPULAUAN BANGKA BELITUNG'
+                    }
+                    
+                    if prov_upper in alias_dict and alias_dict[prov_upper] in name_lookup:
+                        return name_lookup[alias_dict[prov_upper]]
+                        
                     return prov_name
 
-                # Terapkan Smart Matching
+                # Terapkan fungsi yang sudah diperbaiki
                 df_map_agg['Matched_Name'] = df_map_agg['Nama_Geo'].apply(get_matched_name)
-
-                # -- Hilangkan tanda '#' pada 2 baris st.write di bawah ini jika Anda ingin melihat hasil deteksinya --
-                # st.write("List Nama di GeoJSON:", list(name_lookup.keys()))
-                # st.write("Data yang dicocokkan:", df_map_agg['Matched_Name'].tolist())
 
                 fig_map = px.choropleth(
                     df_map_agg,
