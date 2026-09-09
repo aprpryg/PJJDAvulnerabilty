@@ -251,11 +251,25 @@ with tab1:
                             matched_key = 'KEPULAUAN BANGKA BELITUNG'
                         
                         r1 = row.to_dict()
-                        # Ambil format casing asli dari GeoJSON
-                        r1['Matched_Name'] = geo_lookup.get(matched_key, prov_name)
+                        if matched_key in geo_lookup:
+                            r1['Matched_Name'] = geo_lookup[matched_key]
+                        else:
+                            # SAFE FALLBACK: Fuzzy matching khusus untuk provinsi yang gagal exact match (misal Banten typo)
+                            import difflib
+                            closest = difflib.get_close_matches(matched_key, geo_names, n=1, cutoff=0.5)
+                            if closest:
+                                r1['Matched_Name'] = geo_lookup[closest[0]]
+                            else:
+                                r1['Matched_Name'] = prov_name
+                        
                         new_rows.append(r1)
                         
                 df_map_final = pd.DataFrame(new_rows)
+                
+                # --- FITUR DIAGNOSTIK (Bisa Anda hapus nanti jika peta sudah sempurna) ---
+                unmatched = set(df_map_final['Matched_Name']) - set(geo_lookup.values())
+                if unmatched:
+                    st.warning(f"Peringatan Data Geospasial: Provinsi berikut tidak memiliki poligon di file GeoJSON Anda: {unmatched}")
                 
                 # 3. Plotting dengan Native Hover (Menghindari Bug Indeks)
                 fig_map = px.choropleth(
