@@ -177,8 +177,10 @@ with tab1:
         
         import difflib
 
-        # --- KEMBALIKAN KE LOGIKA NORMALISASI AWAL (EXACT MATCH) ---
-        # 1. Agregasi provinsi pemekaran kembali ke provinsi induk (Standar 34 Provinsi)
+        import pandas as pd
+
+        # --- FIX PETA INDONESIA & PAPUA (Bebas Tabrakan & Mengatasi Pemisahan Poligon) ---
+        # 1. Kembalikan provinsi pemekaran baru ke provinsi induk
         pemekaran_dict = {
             'PAPUA SELATAN': 'PAPUA',
             'PAPUA TENGAH': 'PAPUA',
@@ -187,9 +189,29 @@ with tab1:
         }
         
         df_map = prov_pct.copy()
+        # Bersihkan nama BPS (hapus spasi tersembunyi)
+        df_map['Nama_Provinsi'] = df_map['Nama_Provinsi'].astype(str).str.strip().str.upper()
         df_map['Nama_Provinsi'] = df_map['Nama_Provinsi'].replace(pemekaran_dict)
+        
+        # Agregasi data setelah digabung
         df_map_agg = df_map.groupby('Nama_Provinsi', as_index=False)['Vuln_Pct'].mean()
         df_map_agg['Category'] = df_map_agg['Vuln_Pct'].apply(categorize_vuln)
+
+        # 2. Tangani kasus khusus GeoJSON superpikar: Papua terpecah jadi 3 poligon
+        # Kita duplikasi baris 'PAPUA' agar mengisi poligon 'IRIAN JAYA TENGAH' dan 'IRIAN JAYA TIMUR'
+        if 'PAPUA' in df_map_agg['Nama_Provinsi'].values:
+            papua_row = df_map_agg[df_map_agg['Nama_Provinsi'] == 'PAPUA'].iloc[0]
+            
+            # Buat baris baru untuk poligon duplikat
+            row_tengah = papua_row.copy()
+            row_tengah['Nama_Provinsi'] = 'IRIAN JAYA TENGAH'
+            
+            row_timur = papua_row.copy()
+            row_timur['Nama_Provinsi'] = 'IRIAN JAYA TIMUR'
+            
+            # Hapus 'PAPUA' asli dan masukkan yang sudah dipecah agar Plotly bisa mewarnai keduanya
+            df_map_agg = df_map_agg[df_map_agg['Nama_Provinsi'] != 'PAPUA']
+            df_map_agg = pd.concat([df_map_agg, pd.DataFrame([row_tengah, row_timur])], ignore_index=True)
 
         st.info("Top 5 kerentanan tertinggi didominasi wilayah Timur. Intervensi memerlukan pembangunan infrastruktur dasar yang struktural.")
 
@@ -198,24 +220,45 @@ with tab1:
             if geojson_indo:
                 color_map = {"Low (0-20%)": "#fee5d9", "Moderate (20-40%)": "#fb6a4a", "High (>40%)": "#a50f15"}
                 
-                # Ambil properti key dan daftar nama persis dari file GeoJSON
+                # Cek kunci properti di GeoJSON
                 first_feat = geojson_indo['features'][0]['properties']
-                prop_key = 'Propinsi' if 'Propinsi' in first_feat else list(first_feat.keys())[0]
+                possible_keys = ['Propinsi', 'provinsi', 'NAME_1', 'name_1', 'state']
+                prop_key = next((k for k in possible_keys if k in first_feat), list(first_feat.keys())[0])
+
                 geojson_names = [f['properties'][prop_key] for f in geojson_indo['features']]
-                
-                # Buat kamus: Kunci UPPERCASE (dari SUSENAS) -> Nilai Format Asli (dari GeoJSON)
                 name_lookup = {str(name).strip().upper(): name for name in geojson_names}
                 
-                # Tambahkan jaring pengaman alias HANYA JIKA GeoJSON menggunakan nama lama
-                if 'IRIAN JAYA' in name_lookup and 'PAPUA' not in name_lookup:
-                    name_lookup['PAPUA'] = name_lookup['IRIAN JAYA']
-                if 'IRIAN JAYA BARAT' in name_lookup and 'PAPUA BARAT' not in name_lookup:
-                    name_lookup['PAPUA BARAT'] = name_lookup['IRIAN JAYA BARAT']
-                if 'JAKARTA RAYA' in name_lookup and 'DKI JAKARTA' not in name_lookup:
-                    name_lookup['DKI JAKARTA'] = name_lookup['JAKARTA RAYA']
+                # Alias eksplisit untuk ejaan usang di GeoJSON
+                alias_map = {
+                    'PAPUA BARAT': 'IRIAN JAYA BARAT',
+                    'DI YOGYAKARTA': 'DAERAH ISTIMEWA YOGYAKARTA',
+                    'DKI JAKARTA': 'JAKARTA RAYA',
+                    'NUSA TENGGARA BARAT': 'NUSATENGGARA BARAT',
+                    'NUSA TENGGARA TIMUR': 'NUSATENGGARA TIMUR',
+                    'BANGKA BELITUNG': 'KEPULAUAN BANGKA BELITUNG'
+                }
                 
-                # Terapkan pemetaan secara eksak tanpa fuzzy matching
-                df_map_agg['Matched_Name'] = df_map_agg['Nama_Provinsi'].apply(lambda x: name_lookup.get(x.upper(), x))
+                # Fungsi pemetaan final anti-gagal
+                def get_matched_name(bps_name):
+                    clean_name = str(bps_name).strip().upper()
+                    
+                    # 1. Cek di kamus alias
+                    if clean_name in alias_map and alias_map[clean_name] in name_lookup:
+                        return name_lookup[alias_map[clean_name]]
+                    
+                    # 2. Cek kecocokan persis
+                    if clean_name in name_lookup:
+                        return name_lookup[clean_name]
+                    
+                    # 3. Fallback: hilangkan seluruh spasi jika GeoJSON salah ketik (contoh 'NUSA TENGGARA' -> 'NUSATENGGARA')
+                    no_space = clean_name.replace(" ", "")
+                    for geo_k, geo_v in name_lookup.items():
+                        if geo_k.replace(" ", "") == no_space:
+                            return geo_v
+                            
+                    return bps_name
+
+                df_map_agg['Matched_Name'] = df_map_agg['Nama_Provinsi'].apply(get_matched_name)
 
                 fig_map = px.choropleth(
                     df_map_agg,
