@@ -434,7 +434,6 @@ with tab4:
             pend_options = [3, 8, 13, 21, 25]
             sim_pend = st.selectbox("Education", pend_options, format_func=lambda x: {3: "SD", 8: "SMP", 13: "SMA", 21: "S1", 25: "No Primary Education"}.get(x, str(x)))
             sim_rumah = st.selectbox("Housing", [1, 2, 3], format_func=lambda x: {1: "Own House", 2: "Rent", 3: "Rent-Free"}.get(x, str(x)))
-            sim_bansos = st.selectbox("Social Assistance", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
             
             submit_btn = st.form_submit_button("Estimate Vulnerability", use_container_width=True)
             
